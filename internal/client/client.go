@@ -2,18 +2,21 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"paqet/internal/conf"
 	"paqet/internal/flog"
 	"paqet/internal/pkg/iterator"
+	"paqet/internal/socket"
 	"paqet/internal/tnet"
 	"sync"
 )
 
 type Client struct {
-	cfg     *conf.Conf
-	iter    *iterator.Iterator[*timedConn]
-	udpPool *udpPool
-	mu      sync.Mutex
+	cfg        *conf.Conf
+	iter       *iterator.Iterator[*timedConn]
+	udpPool    *udpPool
+	mu         sync.Mutex
+	sharedPkt  *socket.PacketConn // Shared PacketConn for all KCP connections
 }
 
 func New(cfg *conf.Conf) (*Client, error) {
@@ -26,8 +29,16 @@ func New(cfg *conf.Conf) (*Client, error) {
 }
 
 func (c *Client) Start(ctx context.Context) error {
+	// Create a single shared PacketConn for all KCP connections
+	netCfg := c.cfg.Network
+	sharedPkt, err := socket.New(ctx, &netCfg)
+	if err != nil {
+		return fmt.Errorf("could not create shared packet conn: %w", err)
+	}
+	c.sharedPkt = sharedPkt
+
 	for i := range c.cfg.Transport.Conn {
-		tc, err := newTimedConn(ctx, c.cfg)
+		tc, err := newTimedConn(ctx, c.cfg, sharedPkt)
 		if err != nil {
 			flog.Errorf("failed to create connection %d: %v", i+1, err)
 			return err
@@ -41,6 +52,9 @@ func (c *Client) Start(ctx context.Context) error {
 		<-ctx.Done()
 		for _, tc := range c.iter.Items {
 			tc.close()
+		}
+		if c.sharedPkt != nil {
+			c.sharedPkt.Close()
 		}
 		flog.Infof("client shutdown complete")
 	}()
