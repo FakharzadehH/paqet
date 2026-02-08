@@ -42,6 +42,7 @@ type SendHandle struct {
 	ipv6Pool      sync.Pool
 	tcpPool       sync.Pool
 	bufPool       sync.Pool
+	tsDataPool    sync.Pool // Pool for 8-byte timestamp data
 }
 
 func NewSendHandle(cfg *conf.Network) (*SendHandle, error) {
@@ -105,6 +106,12 @@ func NewSendHandle(cfg *conf.Network) (*SendHandle, error) {
 		bufPool: sync.Pool{
 			New: func() any {
 				return gopacket.NewSerializeBuffer()
+			},
+		},
+		tsDataPool: sync.Pool{
+			New: func() any {
+				b := make([]byte, 8)
+				return &b
 			},
 		},
 	}
@@ -175,8 +182,9 @@ func (h *SendHandle) buildTCPHeader(dstPort uint16, f conf.TCPF) *layers.TCP {
 	counter := atomic.AddUint32(&h.tsCounter, 1)
 	tsVal := h.time + (counter >> 3)
 	if f.SYN {
-		// Allocate fresh timestamp data to avoid data race
-		tsData := make([]byte, 8)
+		// Get timestamp data from pool
+		tsDataPtr := h.tsDataPool.Get().(*[]byte)
+		tsData := *tsDataPtr
 		binary.BigEndian.PutUint32(tsData[0:4], tsVal)
 		binary.BigEndian.PutUint32(tsData[4:8], 0)
 		tcp.Options = []layers.TCPOption{
@@ -186,6 +194,8 @@ func (h *SendHandle) buildTCPHeader(dstPort uint16, f conf.TCPF) *layers.TCP {
 			{OptionType: layers.TCPOptionKindNop},
 			{OptionType: layers.TCPOptionKindWindowScale, OptionLength: 3, OptionData: []byte{8}},
 		}
+		// Return to pool after use (when TCP layer is returned)
+		defer h.tsDataPool.Put(tsDataPtr)
 		tcp.Seq = 1 + (counter & 0x7)
 		tcp.Ack = 0
 		if f.ACK {
@@ -193,8 +203,9 @@ func (h *SendHandle) buildTCPHeader(dstPort uint16, f conf.TCPF) *layers.TCP {
 		}
 	} else {
 		tsEcr := tsVal - (counter%200 + 50)
-		// Allocate fresh timestamp data to avoid data race
-		tsData := make([]byte, 8)
+		// Get timestamp data from pool
+		tsDataPtr := h.tsDataPool.Get().(*[]byte)
+		tsData := *tsDataPtr
 		binary.BigEndian.PutUint32(tsData[0:4], tsVal)
 		binary.BigEndian.PutUint32(tsData[4:8], tsEcr)
 		tcp.Options = []layers.TCPOption{
@@ -202,6 +213,8 @@ func (h *SendHandle) buildTCPHeader(dstPort uint16, f conf.TCPF) *layers.TCP {
 			{OptionType: layers.TCPOptionKindNop},
 			{OptionType: layers.TCPOptionKindTimestamps, OptionLength: 10, OptionData: tsData},
 		}
+		// Return to pool after use (when TCP layer is returned)
+		defer h.tsDataPool.Put(tsDataPtr)
 		seq := h.time + (counter << 7)
 		tcp.Seq = seq
 		tcp.Ack = seq - (counter & 0x3FF) + 1400

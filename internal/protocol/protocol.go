@@ -25,6 +25,11 @@ type Proto struct {
 }
 
 func (p *Proto) Write(w io.Writer) error {
+	// Validate protocol type
+	if p.Type != PPING && p.Type != PPONG && p.Type != PTCPF && p.Type != PTCP && p.Type != PUDP {
+		return fmt.Errorf("invalid protocol type: 0x%02x", p.Type)
+	}
+	
 	// Write type byte
 	if _, err := w.Write([]byte{p.Type}); err != nil {
 		return err

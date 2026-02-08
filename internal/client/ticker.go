@@ -44,8 +44,8 @@ func (c *Client) ticker(ctx context.Context) {
 								time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
 							}
 							if createErr != nil {
-								// Store typed nil to indicate unavailable connection
-								tc.conn.Store((tnet.Conn)(nil))
+								// Invalidate connection
+								tc.invalidateConn()
 								flog.Errorf("failed to recreate connection after retries: %v", createErr)
 							} else {
 								tc.setConn(newConn)
