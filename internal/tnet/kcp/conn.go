@@ -63,8 +63,12 @@ func (c *Conn) Close() error {
 		err = c.UDPSession.Close()
 	}
 	if c.Session != nil {
-		if e := c.Session.Close(); e != nil && err == nil {
-			err = e
+		if e := c.Session.Close(); e != nil {
+			if err == nil {
+				err = e
+			} else {
+				err = fmt.Errorf("multiple close errors: UDPSession: %v, Session: %v", err, e)
+			}
 		}
 	}
 	// Do NOT close PacketConn - it's shared and managed by the Client/Listener

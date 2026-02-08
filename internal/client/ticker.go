@@ -31,7 +31,7 @@ func (c *Client) ticker(ctx context.Context) {
 							if newConn, err := tc.createConn(); err == nil {
 								tc.setConn(newConn)
 							} else {
-								flog.Debugf("failed to recreate nil connection: %v", err)
+								flog.Debugf("failed to recreate connection: %v", err)
 							}
 						}
 						return
