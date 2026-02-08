@@ -52,7 +52,7 @@ func New(ctx context.Context, cfg *conf.Network) (*PacketConn, error) {
 		cfg:        cfg,
 		sendHandle: sendHandle,
 		recvHandle: recvHandle,
-		packets:    make(chan packetData, 1024), // Buffered channel for async reads
+		packets:    make(chan packetData, 8192), // Increased buffer for high throughput
 		ctx:        ctx,
 		cancel:     cancel,
 	}
@@ -85,11 +85,8 @@ func (c *PacketConn) readLoop() {
 			return
 		}
 
-		if err != nil {
-			// On error (e.g., temporary read failures, no packets available),
-			// slow down to avoid busy loop and excessive CPU usage
-			time.Sleep(10 * time.Millisecond)
-		}
+		// No sleep needed - pcap.ReadPacketData() blocks when no packets available
+		// (handle created with BlockForever timeout and ImmediateMode true)
 	}
 }
 

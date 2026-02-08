@@ -143,7 +143,11 @@ func (h *RecvHandle) Read() ([]byte, net.Addr, error) {
 		return nil, nil, nil
 	}
 	
-	return payload, addr, nil
+	// Copy payload to avoid data race - pcap reuses the buffer
+	payloadCopy := make([]byte, len(payload))
+	copy(payloadCopy, payload)
+	
+	return payloadCopy, addr, nil
 }
 
 func (h *RecvHandle) Close() {
