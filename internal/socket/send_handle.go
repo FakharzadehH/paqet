@@ -24,23 +24,24 @@ type TCPF struct {
 }
 
 type SendHandle struct {
-	handle      *pcap.Handle
-	srcIPv4     net.IP
-	srcIPv4RHWA net.HardwareAddr
-	srcIPv6     net.IP
-	srcIPv6RHWA net.HardwareAddr
-	srcPort     uint16
-	synOptions  []layers.TCPOption
-	ackOptions  []layers.TCPOption
-	time        uint32
-	tsCounter   uint32
-	dscp        atomic.Int32
-	tcpF        TCPF
-	ethPool     sync.Pool
-	ipv4Pool    sync.Pool
-	ipv6Pool    sync.Pool
-	tcpPool     sync.Pool
-	bufPool     sync.Pool
+	handle        *pcap.Handle
+	srcIPv4       net.IP
+	srcIPv4RHWA   net.HardwareAddr
+	srcIPv6       net.IP
+	srcIPv6RHWA   net.HardwareAddr
+	srcPort       uint16
+	synOptions    []layers.TCPOption
+	ackOptions    []layers.TCPOption
+	time          uint32
+	tsCounter     uint32
+	dscp          atomic.Int32
+	computeChecks bool
+	tcpF          TCPF
+	ethPool       sync.Pool
+	ipv4Pool      sync.Pool
+	ipv6Pool      sync.Pool
+	tcpPool       sync.Pool
+	bufPool       sync.Pool
 }
 
 func NewSendHandle(cfg *conf.Network) (*SendHandle, error) {
@@ -71,12 +72,13 @@ func NewSendHandle(cfg *conf.Network) (*SendHandle, error) {
 	}
 
 	sh := &SendHandle{
-		handle:     handle,
-		srcPort:    uint16(cfg.Port),
-		synOptions: synOptions,
-		ackOptions: ackOptions,
-		tcpF:       TCPF{tcpF: iterator.Iterator[conf.TCPF]{Items: cfg.TCP.LF}, clientTCPF: make(map[uint64]*iterator.Iterator[conf.TCPF])},
-		time:       uint32(time.Now().UnixNano() / int64(time.Millisecond)),
+		handle:        handle,
+		srcPort:       uint16(cfg.Port),
+		synOptions:    synOptions,
+		ackOptions:    ackOptions,
+		computeChecks: cfg.PCAP.Checksums,
+		tcpF:          TCPF{tcpF: iterator.Iterator[conf.TCPF]{Items: cfg.TCP.LF}, clientTCPF: make(map[uint64]*iterator.Iterator[conf.TCPF])},
+		time:          uint32(time.Now().UnixNano() / int64(time.Millisecond)),
 		ethPool: sync.Pool{
 			New: func() any {
 				return &layers.Ethernet{SrcMAC: cfg.Interface.HardwareAddr}
@@ -219,7 +221,7 @@ func (h *SendHandle) Write(payload []byte, addr *net.UDPAddr) error {
 		ethLayer.EthernetType = layers.EthernetTypeIPv6
 	}
 
-	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
+	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: h.computeChecks}
 	if err := gopacket.SerializeLayers(buf, opts, ethLayer, ipLayer, tcpLayer, gopacket.Payload(payload)); err != nil {
 		return err
 	}

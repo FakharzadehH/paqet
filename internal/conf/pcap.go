@@ -6,7 +6,9 @@ import (
 )
 
 type PCAP struct {
-	Sockbuf int `yaml:"sockbuf"`
+	Sockbuf    int   `yaml:"sockbuf"`
+	Checksums_ *bool `yaml:"checksums"`
+	Checksums  bool  `yaml:"-"`
 }
 
 func (p *PCAP) setDefaults(role string) {
@@ -16,6 +18,14 @@ func (p *PCAP) setDefaults(role string) {
 		} else {
 			p.Sockbuf = 4 * 1024 * 1024
 		}
+	}
+	// Default checksums to true for backward compatibility
+	// Users can explicitly set to false to bypass checksum computation for performance
+	// Note: Most modern NICs/routers will accept packets without checksums
+	if p.Checksums_ != nil {
+		p.Checksums = *p.Checksums_
+	} else {
+		p.Checksums = true
 	}
 }
 
