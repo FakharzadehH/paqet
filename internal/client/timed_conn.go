@@ -8,12 +8,13 @@ import (
 	"paqet/internal/socket"
 	"paqet/internal/tnet"
 	"paqet/internal/tnet/kcp"
+	"sync/atomic"
 	"time"
 )
 
 type timedConn struct {
 	cfg    *conf.Conf
-	conn   tnet.Conn
+	conn   atomic.Value // stores tnet.Conn
 	expire time.Time
 	ctx    context.Context
 }
@@ -21,10 +22,11 @@ type timedConn struct {
 func newTimedConn(ctx context.Context, cfg *conf.Conf) (*timedConn, error) {
 	var err error
 	tc := timedConn{cfg: cfg, ctx: ctx}
-	tc.conn, err = tc.createConn()
+	conn, err := tc.createConn()
 	if err != nil {
 		return nil, err
 	}
+	tc.conn.Store(conn)
 
 	return &tc, nil
 }
@@ -62,8 +64,19 @@ func (tc *timedConn) sendTCPF(conn tnet.Conn) error {
 	return nil
 }
 
+func (tc *timedConn) getConn() tnet.Conn {
+	if c := tc.conn.Load(); c != nil {
+		return c.(tnet.Conn)
+	}
+	return nil
+}
+
+func (tc *timedConn) setConn(conn tnet.Conn) {
+	tc.conn.Store(conn)
+}
+
 func (tc *timedConn) close() {
-	if tc.conn != nil {
-		tc.conn.Close()
+	if conn := tc.getConn(); conn != nil {
+		conn.Close()
 	}
 }
