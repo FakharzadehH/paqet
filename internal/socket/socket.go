@@ -86,7 +86,8 @@ func (c *PacketConn) readLoop() {
 		}
 
 		if err != nil {
-			// On error, slow down to avoid busy loop
+			// On error (e.g., temporary read failures, no packets available),
+			// slow down to avoid busy loop and excessive CPU usage
 			time.Sleep(10 * time.Millisecond)
 		}
 	}

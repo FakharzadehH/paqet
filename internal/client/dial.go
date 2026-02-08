@@ -14,7 +14,7 @@ func (c *Client) newConn() (tnet.Conn, error) {
 }
 
 func (c *Client) newStrm() (tnet.Strm, error) {
-	const maxRetries = 5
+	const maxRetries = 5 // Safe max: backoff won't overflow with reasonable values
 	backoff := 50 * time.Millisecond
 	const maxBackoff = 500 * time.Millisecond
 
