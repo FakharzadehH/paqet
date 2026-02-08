@@ -12,11 +12,12 @@ import (
 )
 
 type timedConn struct {
-	cfg       *conf.Conf
-	conn      atomic.Value // stores tnet.Conn
-	expire    time.Time
-	ctx       context.Context
-	sharedPkt *socket.PacketConn
+	cfg            *conf.Conf
+	conn           atomic.Value // stores tnet.Conn
+	expire         time.Time
+	ctx            context.Context
+	sharedPkt      *socket.PacketConn
+	recreating     atomic.Bool // Prevents concurrent recreation attempts
 }
 
 func newTimedConn(ctx context.Context, cfg *conf.Conf, sharedPkt *socket.PacketConn) (*timedConn, error) {

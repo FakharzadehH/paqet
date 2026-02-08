@@ -16,11 +16,15 @@ func (c *Client) newConn() (tnet.Conn, error) {
 func (c *Client) newStrm() (tnet.Strm, error) {
 	const maxRetries = 5
 	backoff := 50 * time.Millisecond
+	const maxBackoff = 500 * time.Millisecond
 
 	for retry := 0; retry < maxRetries; retry++ {
 		if retry > 0 {
 			time.Sleep(backoff)
 			backoff *= 2 // Exponential backoff
+			if backoff > maxBackoff {
+				backoff = maxBackoff // Cap backoff at 500ms
+			}
 			flog.Debugf("retry attempt %d/%d", retry+1, maxRetries)
 		}
 

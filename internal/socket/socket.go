@@ -24,6 +24,7 @@ type PacketConn struct {
 	readDeadline  atomic.Value
 	writeDeadline atomic.Value
 	dscp          atomic.Int32
+	dscpSet       atomic.Bool // Track if DSCP was explicitly set
 	packets       chan packetData
 
 	ctx    context.Context
@@ -55,7 +56,6 @@ func New(ctx context.Context, cfg *conf.Network) (*PacketConn, error) {
 		ctx:        ctx,
 		cancel:     cancel,
 	}
-	conn.dscp.Store(0) // Default DSCP value
 
 	// Start background reader goroutine
 	go conn.readLoop()
@@ -189,7 +189,8 @@ func (c *PacketConn) SetWriteDeadline(t time.Time) error {
 
 func (c *PacketConn) SetDSCP(dscp int) error {
 	c.dscp.Store(int32(dscp))
-	c.sendHandle.setDSCP(dscp)
+	c.dscpSet.Store(true)
+	c.sendHandle.setDSCP(dscp, true)
 	return nil
 }
 

@@ -35,6 +35,7 @@ type SendHandle struct {
 	time          uint32
 	tsCounter     uint32
 	dscp          atomic.Int32
+	dscpSet       atomic.Bool
 	computeChecks bool
 	tcpF          TCPF
 	ethPool       sync.Pool
@@ -113,16 +114,18 @@ func NewSendHandle(cfg *conf.Network) (*SendHandle, error) {
 		sh.srcIPv6 = cfg.IPv6.Addr.IP
 		sh.srcIPv6RHWA = cfg.IPv6.Router
 	}
-	sh.dscp.Store(0) // Default DSCP value
 	return sh, nil
 }
 
 func (h *SendHandle) buildIPv4Header(dstIP net.IP) *layers.IPv4 {
 	ip := h.ipv4Pool.Get().(*layers.IPv4)
-	dscp := uint8(h.dscp.Load())
-	tos := dscp << 2 // DSCP is upper 6 bits of TOS field
-	if tos == 0 {
-		tos = 184 // Default value for backward compatibility
+	var tos uint8
+	if h.dscpSet.Load() {
+		// DSCP was explicitly set, use it (DSCP is upper 6 bits of TOS field)
+		tos = uint8(h.dscp.Load()) << 2
+	} else {
+		// DSCP not set, use default value for backward compatibility
+		tos = 184
 	}
 	*ip = layers.IPv4{
 		Version:  4,
@@ -139,10 +142,13 @@ func (h *SendHandle) buildIPv4Header(dstIP net.IP) *layers.IPv4 {
 
 func (h *SendHandle) buildIPv6Header(dstIP net.IP) *layers.IPv6 {
 	ip := h.ipv6Pool.Get().(*layers.IPv6)
-	dscp := uint8(h.dscp.Load())
-	trafficClass := dscp << 2 // DSCP is upper 6 bits
-	if trafficClass == 0 {
-		trafficClass = 184 // Default value for backward compatibility
+	var trafficClass uint8
+	if h.dscpSet.Load() {
+		// DSCP was explicitly set, use it (DSCP is upper 6 bits)
+		trafficClass = uint8(h.dscp.Load()) << 2
+	} else {
+		// DSCP not set, use default value for backward compatibility
+		trafficClass = 184
 	}
 	*ip = layers.IPv6{
 		Version:      6,
@@ -244,8 +250,9 @@ func (h *SendHandle) setClientTCPF(addr net.Addr, f []conf.TCPF) {
 	h.tcpF.mu.Unlock()
 }
 
-func (h *SendHandle) setDSCP(dscp int) {
+func (h *SendHandle) setDSCP(dscp int, set bool) {
 	h.dscp.Store(int32(dscp))
+	h.dscpSet.Store(set)
 }
 
 func (h *SendHandle) Close() {

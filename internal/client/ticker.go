@@ -21,9 +21,14 @@ func (c *Client) ticker(ctx context.Context) {
 					}
 					if err := conn.Ping(false); err != nil {
 						// Connection is unhealthy, attempt to recreate
-						conn.Close()
-						if newConn, err := tc.createConn(); err == nil {
-							tc.setConn(newConn)
+						// Use atomic CAS to ensure only one goroutine recreates
+						if tc.recreating.CompareAndSwap(false, true) {
+							defer tc.recreating.Store(false)
+							
+							conn.Close()
+							if newConn, err := tc.createConn(); err == nil {
+								tc.setConn(newConn)
+							}
 						}
 					}
 				}(tc)
