@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"paqet/internal/conf"
+	"paqet/internal/metrics"
 	"sync/atomic"
 	"time"
 )
@@ -83,6 +84,9 @@ func (c *PacketConn) readLoop() {
 		case c.packets <- pkt:
 		case <-c.ctx.Done():
 			return
+		default:
+			// Channel is full, packet dropped
+			metrics.PacketsDropped.Add(1)
 		}
 
 		// No sleep needed - pcap.ReadPacketData() blocks when no packets available

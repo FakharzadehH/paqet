@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"paqet/internal/flog"
+	"paqet/internal/tnet"
 	"time"
 )
 
@@ -17,16 +19,35 @@ func (c *Client) ticker(ctx context.Context) {
 				go func(tc *timedConn) {
 					conn := tc.getConn()
 					if conn == nil {
+						// Try to recreate if nil
+						if tc.recreating.CompareAndSwap(false, true) {
+							defer tc.recreating.Store(false)
+							if newConn, err := tc.createConn(); err == nil {
+								tc.setConn(newConn)
+							}
+						}
 						return
 					}
 					if err := conn.Ping(false); err != nil {
-						// Connection is unhealthy, attempt to recreate
-						// Use atomic CAS to ensure only one goroutine recreates
+						// Connection is unhealthy, attempt to recreate with retries
 						if tc.recreating.CompareAndSwap(false, true) {
 							defer tc.recreating.Store(false)
-							
 							conn.Close()
-							if newConn, err := tc.createConn(); err == nil {
+							// Retry with backoff
+							var newConn tnet.Conn
+							var createErr error
+							for attempt := 0; attempt < 3; attempt++ {
+								newConn, createErr = tc.createConn()
+								if createErr == nil {
+									break
+								}
+								time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
+							}
+							if createErr != nil {
+								// Store typed nil to indicate unavailable connection
+								tc.conn.Store((tnet.Conn)(nil))
+								flog.Errorf("failed to recreate connection after retries: %v", createErr)
+							} else {
 								tc.setConn(newConn)
 							}
 						}

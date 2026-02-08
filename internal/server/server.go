@@ -7,9 +7,11 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"paqet/internal/conf"
 	"paqet/internal/flog"
+	"paqet/internal/metrics"
 	"paqet/internal/socket"
 	"paqet/internal/tnet"
 	"paqet/internal/tnet/kcp"
@@ -55,6 +57,9 @@ func (s *Server) Start() error {
 	defer listener.Close()
 	flog.Infof("Server started - listening for packets on :%d", s.cfg.Listen.Addr.Port)
 
+	// Start metrics reporter
+	metrics.StartReporter(30 * time.Second)
+
 	s.wg.Go(func() {
 		s.listen(ctx, listener)
 	})
@@ -81,9 +86,11 @@ func (s *Server) listen(ctx context.Context, listener tnet.Listener) {
 			continue
 		}
 		flog.Infof("accepted new connection from %s (local: %s)", conn.RemoteAddr(), conn.LocalAddr())
+		metrics.ActiveConns.Add(1)
 
 		s.wg.Go(func() {
 			defer conn.Close()
+			defer metrics.ActiveConns.Add(-1)
 			s.handleConn(ctx, conn)
 		})
 	}

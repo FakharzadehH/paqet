@@ -8,9 +8,16 @@ import (
 )
 
 func (c *Client) newConn() (tnet.Conn, error) {
-	// Use lock-free round-robin connection selection
-	tc := c.iter.Next()
-	return tc.getConn(), nil
+	// Try multiple connections to find a healthy one
+	n := len(c.iter.Items)
+	for i := 0; i < n; i++ {
+		tc := c.iter.Next()
+		conn := tc.getConn()
+		if conn != nil {
+			return conn, nil
+		}
+	}
+	return nil, fmt.Errorf("no healthy connections available")
 }
 
 func (c *Client) newStrm() (tnet.Strm, error) {
