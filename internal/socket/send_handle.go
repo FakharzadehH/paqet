@@ -24,14 +24,13 @@ type TCPF struct {
 }
 
 type SendHandle struct {
-	handle        *pcap.Handle
+	handles       []*pcap.Handle
+	handleIdx     atomic.Uint64
 	srcIPv4       net.IP
 	srcIPv4RHWA   net.HardwareAddr
 	srcIPv6       net.IP
 	srcIPv6RHWA   net.HardwareAddr
 	srcPort       uint16
-	synOptions    []layers.TCPOption
-	ackOptions    []layers.TCPOption
 	time          uint32
 	tsCounter     uint32
 	dscp          atomic.Int32
@@ -43,40 +42,44 @@ type SendHandle struct {
 	ipv6Pool      sync.Pool
 	tcpPool       sync.Pool
 	bufPool       sync.Pool
+	tsDataPool    sync.Pool // Pool for 8-byte timestamp data
 }
 
 func NewSendHandle(cfg *conf.Network) (*SendHandle, error) {
-	handle, err := newHandle(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open pcap handle: %w", err)
+	// Create pool of pcap handles - one per CPU core (minimum 2)
+	numHandles := runtime.NumCPU()
+	if numHandles < 2 {
+		numHandles = 2
 	}
-
-	// SetDirection is not fully supported on Windows Npcap, so skip it
-	if runtime.GOOS != "windows" {
-		if err := handle.SetDirection(pcap.DirectionOut); err != nil {
-			return nil, fmt.Errorf("failed to set pcap direction out: %v", err)
+	
+	handles := make([]*pcap.Handle, numHandles)
+	for i := 0; i < numHandles; i++ {
+		handle, err := newHandle(cfg)
+		if err != nil {
+			// Clean up any handles we've already created
+			for j := 0; j < i; j++ {
+				handles[j].Close()
+			}
+			return nil, fmt.Errorf("failed to open pcap handle %d: %w", i, err)
 		}
-	}
 
-	synOptions := []layers.TCPOption{
-		{OptionType: layers.TCPOptionKindMSS, OptionLength: 4, OptionData: []byte{0x05, 0xb4}},
-		{OptionType: layers.TCPOptionKindSACKPermitted, OptionLength: 2},
-		{OptionType: layers.TCPOptionKindTimestamps, OptionLength: 10, OptionData: make([]byte, 8)},
-		{OptionType: layers.TCPOptionKindNop},
-		{OptionType: layers.TCPOptionKindWindowScale, OptionLength: 3, OptionData: []byte{8}},
-	}
-
-	ackOptions := []layers.TCPOption{
-		{OptionType: layers.TCPOptionKindNop},
-		{OptionType: layers.TCPOptionKindNop},
-		{OptionType: layers.TCPOptionKindTimestamps, OptionLength: 10, OptionData: make([]byte, 8)},
+		// SetDirection is not fully supported on Windows Npcap, so skip it
+		if runtime.GOOS != "windows" {
+			if err := handle.SetDirection(pcap.DirectionOut); err != nil {
+				// Clean up all handles on error
+				handle.Close()
+				for j := 0; j < i; j++ {
+					handles[j].Close()
+				}
+				return nil, fmt.Errorf("failed to set pcap direction out on handle %d: %v", i, err)
+			}
+		}
+		handles[i] = handle
 	}
 
 	sh := &SendHandle{
-		handle:        handle,
+		handles:       handles,
 		srcPort:       uint16(cfg.Port),
-		synOptions:    synOptions,
-		ackOptions:    ackOptions,
 		computeChecks: cfg.PCAP.Checksums,
 		tcpF:          TCPF{tcpF: iterator.Iterator[conf.TCPF]{Items: cfg.TCP.LF}, clientTCPF: make(map[uint64]*iterator.Iterator[conf.TCPF])},
 		time:          uint32(time.Now().UnixNano() / int64(time.Millisecond)),
@@ -103,6 +106,12 @@ func NewSendHandle(cfg *conf.Network) (*SendHandle, error) {
 		bufPool: sync.Pool{
 			New: func() any {
 				return gopacket.NewSerializeBuffer()
+			},
+		},
+		tsDataPool: sync.Pool{
+			New: func() any {
+				b := make([]byte, 8)
+				return &b
 			},
 		},
 	}
@@ -173,9 +182,20 @@ func (h *SendHandle) buildTCPHeader(dstPort uint16, f conf.TCPF) *layers.TCP {
 	counter := atomic.AddUint32(&h.tsCounter, 1)
 	tsVal := h.time + (counter >> 3)
 	if f.SYN {
-		binary.BigEndian.PutUint32(h.synOptions[2].OptionData[0:4], tsVal)
-		binary.BigEndian.PutUint32(h.synOptions[2].OptionData[4:8], 0)
-		tcp.Options = h.synOptions
+		// Get timestamp data from pool
+		tsDataPtr := h.tsDataPool.Get().(*[]byte)
+		tsData := *tsDataPtr
+		binary.BigEndian.PutUint32(tsData[0:4], tsVal)
+		binary.BigEndian.PutUint32(tsData[4:8], 0)
+		tcp.Options = []layers.TCPOption{
+			{OptionType: layers.TCPOptionKindMSS, OptionLength: 4, OptionData: []byte{0x05, 0xb4}},
+			{OptionType: layers.TCPOptionKindSACKPermitted, OptionLength: 2},
+			{OptionType: layers.TCPOptionKindTimestamps, OptionLength: 10, OptionData: tsData},
+			{OptionType: layers.TCPOptionKindNop},
+			{OptionType: layers.TCPOptionKindWindowScale, OptionLength: 3, OptionData: []byte{8}},
+		}
+		// Return to pool after use (when TCP layer is returned)
+		defer h.tsDataPool.Put(tsDataPtr)
 		tcp.Seq = 1 + (counter & 0x7)
 		tcp.Ack = 0
 		if f.ACK {
@@ -183,9 +203,18 @@ func (h *SendHandle) buildTCPHeader(dstPort uint16, f conf.TCPF) *layers.TCP {
 		}
 	} else {
 		tsEcr := tsVal - (counter%200 + 50)
-		binary.BigEndian.PutUint32(h.ackOptions[2].OptionData[0:4], tsVal)
-		binary.BigEndian.PutUint32(h.ackOptions[2].OptionData[4:8], tsEcr)
-		tcp.Options = h.ackOptions
+		// Get timestamp data from pool
+		tsDataPtr := h.tsDataPool.Get().(*[]byte)
+		tsData := *tsDataPtr
+		binary.BigEndian.PutUint32(tsData[0:4], tsVal)
+		binary.BigEndian.PutUint32(tsData[4:8], tsEcr)
+		tcp.Options = []layers.TCPOption{
+			{OptionType: layers.TCPOptionKindNop},
+			{OptionType: layers.TCPOptionKindNop},
+			{OptionType: layers.TCPOptionKindTimestamps, OptionLength: 10, OptionData: tsData},
+		}
+		// Return to pool after use (when TCP layer is returned)
+		defer h.tsDataPool.Put(tsDataPtr)
 		seq := h.time + (counter << 7)
 		tcp.Seq = seq
 		tcp.Ack = seq - (counter & 0x3FF) + 1400
@@ -231,7 +260,11 @@ func (h *SendHandle) Write(payload []byte, addr *net.UDPAddr) error {
 	if err := gopacket.SerializeLayers(buf, opts, ethLayer, ipLayer, tcpLayer, gopacket.Payload(payload)); err != nil {
 		return err
 	}
-	return h.handle.WritePacketData(buf.Bytes())
+	
+	// Use atomic round-robin to select a handle from the pool
+	idx := h.handleIdx.Add(1)
+	handle := h.handles[idx%uint64(len(h.handles))]
+	return handle.WritePacketData(buf.Bytes())
 }
 
 func (h *SendHandle) getClientTCPF(dstIP net.IP, dstPort uint16) conf.TCPF {
@@ -256,7 +289,9 @@ func (h *SendHandle) setDSCP(dscp int, set bool) {
 }
 
 func (h *SendHandle) Close() {
-	if h.handle != nil {
-		h.handle.Close()
+	for _, handle := range h.handles {
+		if handle != nil {
+			handle.Close()
+		}
 	}
 }

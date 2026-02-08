@@ -14,6 +14,7 @@ import (
 type timedConn struct {
 	cfg            *conf.Conf
 	conn           atomic.Value // stores tnet.Conn
+	connValid      atomic.Bool  // tracks if conn is valid
 	expire         time.Time
 	ctx            context.Context
 	sharedPkt      *socket.PacketConn
@@ -28,6 +29,7 @@ func newTimedConn(ctx context.Context, cfg *conf.Conf, sharedPkt *socket.PacketC
 		return nil, err
 	}
 	tc.conn.Store(conn)
+	tc.connValid.Store(true)
 
 	return &tc, nil
 }
@@ -61,6 +63,9 @@ func (tc *timedConn) sendTCPF(conn tnet.Conn) error {
 }
 
 func (tc *timedConn) getConn() tnet.Conn {
+	if !tc.connValid.Load() {
+		return nil
+	}
 	if c := tc.conn.Load(); c != nil {
 		return c.(tnet.Conn)
 	}
@@ -69,6 +74,11 @@ func (tc *timedConn) getConn() tnet.Conn {
 
 func (tc *timedConn) setConn(conn tnet.Conn) {
 	tc.conn.Store(conn)
+	tc.connValid.Store(true)
+}
+
+func (tc *timedConn) invalidateConn() {
+	tc.connValid.Store(false)
 }
 
 func (tc *timedConn) close() {

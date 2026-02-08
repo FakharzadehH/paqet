@@ -38,13 +38,21 @@ func (s *Server) handleTCP(ctx context.Context, strm tnet.Strm, addr string) err
 		errChan <- err
 	}()
 
-	select {
-	case err := <-errChan:
-		if err != nil {
-			flog.Errorf("TCP stream %d to %s failed: %v", strm.SID(), addr, err)
-			return err
+	// Wait for both directions to complete
+	var firstErr error
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-errChan:
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-	case <-ctx.Done():
+	}
+	if firstErr != nil {
+		flog.Errorf("TCP stream %d to %s failed: %v", strm.SID(), addr, firstErr)
+		return firstErr
 	}
 	return nil
 }

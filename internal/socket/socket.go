@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"paqet/internal/conf"
+	"paqet/internal/flog"
+	"paqet/internal/metrics"
 	"sync/atomic"
 	"time"
 )
@@ -26,6 +28,7 @@ type PacketConn struct {
 	dscp          atomic.Int32
 	dscpSet       atomic.Bool // Track if DSCP was explicitly set
 	packets       chan packetData
+	dropCount     atomic.Int64 // Track total drops for logging
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -52,7 +55,7 @@ func New(ctx context.Context, cfg *conf.Network) (*PacketConn, error) {
 		cfg:        cfg,
 		sendHandle: sendHandle,
 		recvHandle: recvHandle,
-		packets:    make(chan packetData, 1024), // Buffered channel for async reads
+		packets:    make(chan packetData, 8192), // Increased buffer for high throughput
 		ctx:        ctx,
 		cancel:     cancel,
 	}
@@ -83,13 +86,18 @@ func (c *PacketConn) readLoop() {
 		case c.packets <- pkt:
 		case <-c.ctx.Done():
 			return
+		default:
+			// Channel is full, packet dropped
+			dropCount := c.dropCount.Add(1)
+			metrics.PacketsDropped.Add(1)
+			// Log every 100th drop to avoid log spam
+			if dropCount%100 == 0 {
+				flog.Warnf("packet channel full, %d total packets dropped", dropCount)
+			}
 		}
 
-		if err != nil {
-			// On error (e.g., temporary read failures, no packets available),
-			// slow down to avoid busy loop and excessive CPU usage
-			time.Sleep(10 * time.Millisecond)
-		}
+		// No sleep needed - pcap.ReadPacketData() blocks when no packets available
+		// (handle created with BlockForever timeout and ImmediateMode true)
 	}
 }
 

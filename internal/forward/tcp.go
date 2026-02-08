@@ -65,14 +65,22 @@ func (f *Forward) handleTCPConn(ctx context.Context, conn net.Conn) error {
 		errCh <- err
 	}()
 
-	select {
-	case err := <-errCh:
-		if err != nil {
-			flog.Errorf("TCP stream %d failed for %s -> %s: %v", strm.SID(), conn.RemoteAddr(), f.targetAddr, err)
-			return err
+	// Wait for both directions to complete
+	var firstErr error
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-errCh:
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-	case <-ctx.Done():
 	}
 
+	if firstErr != nil {
+		flog.Errorf("TCP stream %d failed for %s -> %s: %v", strm.SID(), conn.RemoteAddr(), f.targetAddr, firstErr)
+		return firstErr
+	}
 	return nil
 }

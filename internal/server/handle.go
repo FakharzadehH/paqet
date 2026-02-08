@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"paqet/internal/flog"
+	"paqet/internal/metrics"
 	"paqet/internal/protocol"
 	"paqet/internal/tnet"
 )
@@ -23,8 +24,23 @@ func (s *Server) handleConn(ctx context.Context, conn tnet.Conn) {
 			return
 		}
 		s.wg.Go(func() {
+			// Acquire semaphore to limit concurrent streams
+			select {
+			case s.streamSem <- struct{}{}:
+			case <-ctx.Done():
+				strm.Close()
+				return
+			}
+			defer func() { <-s.streamSem }()
+			
+			// Track stream metrics
+			metrics.ActiveStreams.Add(1)
+			metrics.TotalStreams.Add(1)
+			defer metrics.ActiveStreams.Add(-1)
+			
 			defer strm.Close()
 			if err := s.handleStrm(ctx, strm); err != nil {
+				metrics.StreamErrors.Add(1)
 				flog.Errorf("stream %d from %s closed with error: %v", strm.SID(), strm.RemoteAddr(), err)
 			} else {
 				flog.Debugf("stream %d from %s closed", strm.SID(), strm.RemoteAddr())

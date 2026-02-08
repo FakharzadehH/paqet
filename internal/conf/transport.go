@@ -15,7 +15,7 @@ type Transport struct {
 
 func (t *Transport) setDefaults(role string) {
 	if t.Conn == 0 {
-		t.Conn = 1
+		t.Conn = 4
 	}
 
 	if t.TCPBuf == 0 {
