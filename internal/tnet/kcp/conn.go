@@ -67,7 +67,7 @@ func (c *Conn) Close() error {
 			if err == nil {
 				err = e
 			} else {
-				err = fmt.Errorf("multiple close errors: UDPSession: %v, Session: %v", err, e)
+				err = fmt.Errorf("failed to close connections: UDPSession error: %v, Session error: %v", err, e)
 			}
 		}
 	}

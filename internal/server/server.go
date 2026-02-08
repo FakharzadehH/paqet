@@ -82,7 +82,7 @@ func (s *Server) listen(ctx context.Context, listener tnet.Listener) {
 		}
 		conn, err := listener.Accept()
 		if err != nil {
-			// Check if context is cancelled — if so, stop accepting
+			// Check if context is canceled — if so, stop accepting
 			select {
 			case <-ctx.Done():
 				return
