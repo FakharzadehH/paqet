@@ -24,22 +24,25 @@ type TCPF struct {
 }
 
 type SendHandle struct {
-	handle      *pcap.Handle
-	srcIPv4     net.IP
-	srcIPv4RHWA net.HardwareAddr
-	srcIPv6     net.IP
-	srcIPv6RHWA net.HardwareAddr
-	srcPort     uint16
-	synOptions  []layers.TCPOption
-	ackOptions  []layers.TCPOption
-	time        uint32
-	tsCounter   uint32
-	tcpF        TCPF
-	ethPool     sync.Pool
-	ipv4Pool    sync.Pool
-	ipv6Pool    sync.Pool
-	tcpPool     sync.Pool
-	bufPool     sync.Pool
+	handle        *pcap.Handle
+	srcIPv4       net.IP
+	srcIPv4RHWA   net.HardwareAddr
+	srcIPv6       net.IP
+	srcIPv6RHWA   net.HardwareAddr
+	srcPort       uint16
+	synOptions    []layers.TCPOption
+	ackOptions    []layers.TCPOption
+	time          uint32
+	tsCounter     uint32
+	dscp          atomic.Int32
+	dscpSet       atomic.Bool
+	computeChecks bool
+	tcpF          TCPF
+	ethPool       sync.Pool
+	ipv4Pool      sync.Pool
+	ipv6Pool      sync.Pool
+	tcpPool       sync.Pool
+	bufPool       sync.Pool
 }
 
 func NewSendHandle(cfg *conf.Network) (*SendHandle, error) {
@@ -70,12 +73,13 @@ func NewSendHandle(cfg *conf.Network) (*SendHandle, error) {
 	}
 
 	sh := &SendHandle{
-		handle:     handle,
-		srcPort:    uint16(cfg.Port),
-		synOptions: synOptions,
-		ackOptions: ackOptions,
-		tcpF:       TCPF{tcpF: iterator.Iterator[conf.TCPF]{Items: cfg.TCP.LF}, clientTCPF: make(map[uint64]*iterator.Iterator[conf.TCPF])},
-		time:       uint32(time.Now().UnixNano() / int64(time.Millisecond)),
+		handle:        handle,
+		srcPort:       uint16(cfg.Port),
+		synOptions:    synOptions,
+		ackOptions:    ackOptions,
+		computeChecks: cfg.PCAP.Checksums,
+		tcpF:          TCPF{tcpF: iterator.Iterator[conf.TCPF]{Items: cfg.TCP.LF}, clientTCPF: make(map[uint64]*iterator.Iterator[conf.TCPF])},
+		time:          uint32(time.Now().UnixNano() / int64(time.Millisecond)),
 		ethPool: sync.Pool{
 			New: func() any {
 				return &layers.Ethernet{SrcMAC: cfg.Interface.HardwareAddr}
@@ -115,10 +119,18 @@ func NewSendHandle(cfg *conf.Network) (*SendHandle, error) {
 
 func (h *SendHandle) buildIPv4Header(dstIP net.IP) *layers.IPv4 {
 	ip := h.ipv4Pool.Get().(*layers.IPv4)
+	var tos uint8
+	if h.dscpSet.Load() {
+		// DSCP was explicitly set, use it (DSCP is upper 6 bits of TOS field)
+		tos = uint8(h.dscp.Load()) << 2
+	} else {
+		// DSCP not set, use default value for backward compatibility
+		tos = 184
+	}
 	*ip = layers.IPv4{
 		Version:  4,
 		IHL:      5,
-		TOS:      184,
+		TOS:      tos,
 		TTL:      64,
 		Flags:    layers.IPv4DontFragment,
 		Protocol: layers.IPProtocolTCP,
@@ -130,9 +142,17 @@ func (h *SendHandle) buildIPv4Header(dstIP net.IP) *layers.IPv4 {
 
 func (h *SendHandle) buildIPv6Header(dstIP net.IP) *layers.IPv6 {
 	ip := h.ipv6Pool.Get().(*layers.IPv6)
+	var trafficClass uint8
+	if h.dscpSet.Load() {
+		// DSCP was explicitly set, use it (DSCP is upper 6 bits)
+		trafficClass = uint8(h.dscp.Load()) << 2
+	} else {
+		// DSCP not set, use default value for backward compatibility
+		trafficClass = 184
+	}
 	*ip = layers.IPv6{
 		Version:      6,
-		TrafficClass: 184,
+		TrafficClass: trafficClass,
 		HopLimit:     64,
 		NextHeader:   layers.IPProtocolTCP,
 		SrcIP:        h.srcIPv6,
@@ -207,7 +227,7 @@ func (h *SendHandle) Write(payload []byte, addr *net.UDPAddr) error {
 		ethLayer.EthernetType = layers.EthernetTypeIPv6
 	}
 
-	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
+	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: h.computeChecks}
 	if err := gopacket.SerializeLayers(buf, opts, ethLayer, ipLayer, tcpLayer, gopacket.Payload(payload)); err != nil {
 		return err
 	}
@@ -228,6 +248,11 @@ func (h *SendHandle) setClientTCPF(addr net.Addr, f []conf.TCPF) {
 	h.tcpF.mu.Lock()
 	h.tcpF.clientTCPF[hash.IPAddr(a.IP, uint16(a.Port))] = &iterator.Iterator[conf.TCPF]{Items: f}
 	h.tcpF.mu.Unlock()
+}
+
+func (h *SendHandle) setDSCP(dscp int, set bool) {
+	h.dscp.Store(int32(dscp))
+	h.dscpSet.Store(set)
 }
 
 func (h *SendHandle) Close() {

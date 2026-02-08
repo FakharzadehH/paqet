@@ -2,41 +2,39 @@ package client
 
 import (
 	"context"
-	"fmt"
 	"paqet/internal/conf"
 	"paqet/internal/protocol"
 	"paqet/internal/socket"
 	"paqet/internal/tnet"
 	"paqet/internal/tnet/kcp"
+	"sync/atomic"
 	"time"
 )
 
 type timedConn struct {
-	cfg    *conf.Conf
-	conn   tnet.Conn
-	expire time.Time
-	ctx    context.Context
+	cfg            *conf.Conf
+	conn           atomic.Value // stores tnet.Conn
+	expire         time.Time
+	ctx            context.Context
+	sharedPkt      *socket.PacketConn
+	recreating     atomic.Bool // Prevents concurrent recreation attempts
 }
 
-func newTimedConn(ctx context.Context, cfg *conf.Conf) (*timedConn, error) {
+func newTimedConn(ctx context.Context, cfg *conf.Conf, sharedPkt *socket.PacketConn) (*timedConn, error) {
 	var err error
-	tc := timedConn{cfg: cfg, ctx: ctx}
-	tc.conn, err = tc.createConn()
+	tc := timedConn{cfg: cfg, ctx: ctx, sharedPkt: sharedPkt}
+	conn, err := tc.createConn()
 	if err != nil {
 		return nil, err
 	}
+	tc.conn.Store(conn)
 
 	return &tc, nil
 }
 
 func (tc *timedConn) createConn() (tnet.Conn, error) {
-	netCfg := tc.cfg.Network
-	pConn, err := socket.New(tc.ctx, &netCfg)
-	if err != nil {
-		return nil, fmt.Errorf("could not create packet conn: %w", err)
-	}
-
-	conn, err := kcp.Dial(tc.cfg.Server.Addr, tc.cfg.Transport.KCP, pConn)
+	// Use the shared PacketConn instead of creating a new one
+	conn, err := kcp.Dial(tc.cfg.Server.Addr, tc.cfg.Transport.KCP, tc.sharedPkt)
 	if err != nil {
 		return nil, err
 	}
@@ -62,8 +60,19 @@ func (tc *timedConn) sendTCPF(conn tnet.Conn) error {
 	return nil
 }
 
+func (tc *timedConn) getConn() tnet.Conn {
+	if c := tc.conn.Load(); c != nil {
+		return c.(tnet.Conn)
+	}
+	return nil
+}
+
+func (tc *timedConn) setConn(conn tnet.Conn) {
+	tc.conn.Store(conn)
+}
+
 func (tc *timedConn) close() {
-	if tc.conn != nil {
-		tc.conn.Close()
+	if conn := tc.getConn(); conn != nil {
+		conn.Close()
 	}
 }
