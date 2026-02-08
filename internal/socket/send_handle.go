@@ -34,6 +34,7 @@ type SendHandle struct {
 	ackOptions  []layers.TCPOption
 	time        uint32
 	tsCounter   uint32
+	dscp        atomic.Int32
 	tcpF        TCPF
 	ethPool     sync.Pool
 	ipv4Pool    sync.Pool
@@ -110,15 +111,21 @@ func NewSendHandle(cfg *conf.Network) (*SendHandle, error) {
 		sh.srcIPv6 = cfg.IPv6.Addr.IP
 		sh.srcIPv6RHWA = cfg.IPv6.Router
 	}
+	sh.dscp.Store(0) // Default DSCP value
 	return sh, nil
 }
 
 func (h *SendHandle) buildIPv4Header(dstIP net.IP) *layers.IPv4 {
 	ip := h.ipv4Pool.Get().(*layers.IPv4)
+	dscp := uint8(h.dscp.Load())
+	tos := dscp << 2 // DSCP is upper 6 bits of TOS field
+	if tos == 0 {
+		tos = 184 // Default value for backward compatibility
+	}
 	*ip = layers.IPv4{
 		Version:  4,
 		IHL:      5,
-		TOS:      184,
+		TOS:      tos,
 		TTL:      64,
 		Flags:    layers.IPv4DontFragment,
 		Protocol: layers.IPProtocolTCP,
@@ -130,9 +137,14 @@ func (h *SendHandle) buildIPv4Header(dstIP net.IP) *layers.IPv4 {
 
 func (h *SendHandle) buildIPv6Header(dstIP net.IP) *layers.IPv6 {
 	ip := h.ipv6Pool.Get().(*layers.IPv6)
+	dscp := uint8(h.dscp.Load())
+	trafficClass := dscp << 2 // DSCP is upper 6 bits
+	if trafficClass == 0 {
+		trafficClass = 184 // Default value for backward compatibility
+	}
 	*ip = layers.IPv6{
 		Version:      6,
-		TrafficClass: 184,
+		TrafficClass: trafficClass,
 		HopLimit:     64,
 		NextHeader:   layers.IPProtocolTCP,
 		SrcIP:        h.srcIPv6,
@@ -228,6 +240,10 @@ func (h *SendHandle) setClientTCPF(addr net.Addr, f []conf.TCPF) {
 	h.tcpF.mu.Lock()
 	h.tcpF.clientTCPF[hash.IPAddr(a.IP, uint16(a.Port))] = &iterator.Iterator[conf.TCPF]{Items: f}
 	h.tcpF.mu.Unlock()
+}
+
+func (h *SendHandle) setDSCP(dscp int) {
+	h.dscp.Store(int32(dscp))
 }
 
 func (h *SendHandle) Close() {

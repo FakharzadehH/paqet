@@ -17,6 +17,7 @@ type PacketConn struct {
 	recvHandle    *RecvHandle
 	readDeadline  atomic.Value
 	writeDeadline atomic.Value
+	dscp          atomic.Int32
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -46,6 +47,7 @@ func New(ctx context.Context, cfg *conf.Network) (*PacketConn, error) {
 		ctx:        ctx,
 		cancel:     cancel,
 	}
+	conn.dscp.Store(0) // Default DSCP value
 
 	return conn, nil
 }
@@ -145,6 +147,8 @@ func (c *PacketConn) SetWriteDeadline(t time.Time) error {
 }
 
 func (c *PacketConn) SetDSCP(dscp int) error {
+	c.dscp.Store(int32(dscp))
+	c.sendHandle.setDSCP(dscp)
 	return nil
 }
 
