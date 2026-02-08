@@ -60,14 +60,14 @@ func (c *Conn) Ping(wait bool) error {
 func (c *Conn) Close() error {
 	var err error
 	if c.UDPSession != nil {
-		c.UDPSession.Close()
+		err = c.UDPSession.Close()
 	}
 	if c.Session != nil {
-		c.Session.Close()
+		if e := c.Session.Close(); e != nil && err == nil {
+			err = e
+		}
 	}
-	if c.PacketConn != nil {
-		c.PacketConn.Close()
-	}
+	// Do NOT close PacketConn - it's shared and managed by the Client/Listener
 	return err
 }
 
