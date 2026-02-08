@@ -19,16 +19,16 @@ func (t *Transport) setDefaults(role string) {
 	}
 
 	if t.TCPBuf == 0 {
-		t.TCPBuf = 8 * 1024
+		t.TCPBuf = 64 * 1024
 	}
-	if t.TCPBuf < 4*1024 {
-		t.TCPBuf = 4 * 1024
+	if t.TCPBuf < 16*1024 {
+		t.TCPBuf = 16 * 1024
 	}
 	if t.UDPBuf == 0 {
-		t.UDPBuf = 4 * 1024
+		t.UDPBuf = 32 * 1024
 	}
-	if t.UDPBuf < 2*1024 {
-		t.UDPBuf = 2 * 1024
+	if t.UDPBuf < 8*1024 {
+		t.UDPBuf = 8 * 1024
 	}
 
 	switch t.Protocol {

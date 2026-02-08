@@ -54,12 +54,12 @@ func (k *KCP) setDefaults(role string) {
 		}
 	}
 
-	// if k.Dshard == 0 {
-	// 	k.Dshard = 10
-	// }
-	// if k.Pshard == 0 {
-	// 	k.Pshard = 3
-	// }
+	if k.Dshard == 0 {
+		k.Dshard = 10
+	}
+	if k.Pshard == 0 {
+		k.Pshard = 3
+	}
 
 	if k.Block_ == "" {
 		k.Block_ = "aes"
