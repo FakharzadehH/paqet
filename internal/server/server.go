@@ -16,14 +16,16 @@ import (
 )
 
 type Server struct {
-	cfg   *conf.Conf
-	pConn *socket.PacketConn
-	wg    sync.WaitGroup
+	cfg       *conf.Conf
+	pConn     *socket.PacketConn
+	wg        sync.WaitGroup
+	streamSem chan struct{}
 }
 
 func New(cfg *conf.Conf) (*Server, error) {
 	s := &Server{
-		cfg: cfg,
+		cfg:       cfg,
+		streamSem: make(chan struct{}, 8192),
 	}
 
 	return s, nil
