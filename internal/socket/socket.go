@@ -74,7 +74,7 @@ func (c *PacketConn) readLoop() {
 
 		payload, addr, err := c.recvHandle.Read()
 		
-		// Skip nil payloads (non-TCP packets, parsing failures, etc.)
+		// Skip nil payloads (parsing failures, TCP packets without payload, etc.)
 		// These waste channel capacity and cause empty reads to KCP
 		if err == nil && payload == nil {
 			continue
