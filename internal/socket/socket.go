@@ -7,8 +7,6 @@ import (
 	"net"
 	"os"
 	"paqet/internal/conf"
-	"paqet/internal/flog"
-	"paqet/internal/metrics"
 	"sync/atomic"
 	"time"
 )
@@ -28,7 +26,6 @@ type PacketConn struct {
 	dscp          atomic.Int32
 	dscpSet       atomic.Bool // Track if DSCP was explicitly set
 	packets       chan packetData
-	dropCount     atomic.Int64 // Track total drops for logging
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -76,24 +73,25 @@ func (c *PacketConn) readLoop() {
 		}
 
 		payload, addr, err := c.recvHandle.Read()
+		
+		// Skip nil payloads (non-TCP packets, parsing failures, etc.)
+		// These waste channel capacity and cause empty reads to KCP
+		if err == nil && payload == nil {
+			continue
+		}
+		
 		pkt := packetData{
 			payload: payload,
 			addr:    addr,
 			err:     err,
 		}
 
+		// MUST block here - never drop packets. KCP needs all packets including ACKs.
+		// Backpressure goes to pcap kernel buffer which is much larger.
 		select {
 		case c.packets <- pkt:
 		case <-c.ctx.Done():
 			return
-		default:
-			// Channel is full, packet dropped
-			dropCount := c.dropCount.Add(1)
-			metrics.PacketsDropped.Add(1)
-			// Log every 100th drop to avoid log spam
-			if dropCount%100 == 0 {
-				flog.Warnf("packet channel full, %d total packets dropped", dropCount)
-			}
 		}
 
 		// No sleep needed - pcap.ReadPacketData() blocks when no packets available
