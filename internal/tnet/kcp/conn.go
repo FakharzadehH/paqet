@@ -35,24 +35,35 @@ func (c *Conn) AcceptStrm() (tnet.Strm, error) {
 }
 
 func (c *Conn) Ping(wait bool) error {
+	// Check if session is closed first
+	if c.Session.IsClosed() {
+		return fmt.Errorf("session is closed")
+	}
+	
+	// If wait=false, just checking session status is sufficient
+	// Opening a stream creates unnecessary overhead on the server
+	if !wait {
+		return nil
+	}
+	
+	// Full roundtrip ping for wait=true
 	strm, err := c.Session.OpenStream()
 	if err != nil {
 		return fmt.Errorf("ping failed: %v", err)
 	}
 	defer strm.Close()
-	if wait {
-		p := protocol.Proto{Type: protocol.PPING}
-		err = p.Write(strm)
-		if err != nil {
-			return fmt.Errorf("strm ping write failed: %v", err)
-		}
-		err = p.Read(strm)
-		if err != nil {
-			return fmt.Errorf("strm ping read failed: %v", err)
-		}
-		if p.Type != protocol.PPONG {
-			return fmt.Errorf("strm pong failed: %v", err)
-		}
+	
+	p := protocol.Proto{Type: protocol.PPING}
+	err = p.Write(strm)
+	if err != nil {
+		return fmt.Errorf("strm ping write failed: %v", err)
+	}
+	err = p.Read(strm)
+	if err != nil {
+		return fmt.Errorf("strm ping read failed: %v", err)
+	}
+	if p.Type != protocol.PPONG {
+		return fmt.Errorf("strm pong failed: unexpected type %d", p.Type)
 	}
 	return nil
 }

@@ -35,13 +35,16 @@ func aplConf(conn *kcp.UDPSession, cfg *conf.KCP) {
 	conn.SetWriteDelay(wDelay)
 	conn.SetACKNoDelay(ackNoDelay)
 	conn.SetDSCP(46)
+	conn.SetStreamMode(true)                 // Enable stream mode for better throughput
+	conn.SetReadBuffer(16 * 1024 * 1024)     // 16MB read buffer for shared transport
+	conn.SetWriteBuffer(16 * 1024 * 1024)    // 16MB write buffer for shared transport
 }
 
 func smuxConf(cfg *conf.KCP) *smux.Config {
 	var sconf = smux.DefaultConfig()
 	sconf.Version = 2
 	sconf.KeepAliveInterval = 10 * time.Second
-	sconf.KeepAliveTimeout = 30 * time.Second
+	sconf.KeepAliveTimeout = 60 * time.Second // Increased from 30s to 60s for more tolerance with shared transport
 	sconf.MaxFrameSize = 65535
 	sconf.MaxReceiveBuffer = cfg.Smuxbuf
 	sconf.MaxStreamBuffer = cfg.Streambuf
